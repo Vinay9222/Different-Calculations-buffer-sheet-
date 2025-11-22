@@ -5,7 +5,6 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>SLA Completion Calculator</title>
     <style>
-      /* Styles remain the same for visual consistency */
       body {
         font-family: Arial, sans-serif;
         margin: 20px;
@@ -59,7 +58,6 @@
       #copy-btn:hover {
         background-color: #1e7e34;
       }
-      /* New button style */
       #copy-chain-diff-btn {
         background-color: #ffc107;
         color: #343a40;
@@ -122,22 +120,15 @@
         <p>Format: <code>ChainName [tab] YYYY-MM-DD [tab] HH:MM ...</code></p>
         <textarea
           id="completion-input"
-          placeholder="Example (two completions for ChainA, can be on one line or two):&#10;ChainA&#9;2025-11-20&#9;07:50&#9;ChainA&#9;2025-11-20&#9;08:15&#10;ChainB&#9;2025-11-19&#9;15:20"
+          placeholder="Example:&#10;ChainA&#9;2025-11-20&#9;07:50&#9;ChainA&#9;2025-11-20&#9;08:15&#10;ChainB&#9;2025-11-19&#9;15:20"
         ></textarea>
       </div>
     </div>
 
     <div>
       <button id="process-btn">Process Data</button>
-      <button id="copy-btn" title="Copy only the Difference column.">
-        Copy Differences
-      </button>
-      <button
-        id="copy-chain-diff-btn"
-        title="Copy Chain Name and Difference, separated by a tab."
-      >
-        Copy Chain & Diff
-      </button>
+      <button id="copy-btn">Copy Differences</button>
+      <button id="copy-chain-diff-btn">Copy Chain & Diff</button>
     </div>
 
     <table id="output-table">
@@ -151,231 +142,114 @@
     </table>
 
     <script>
-      /**
-       * Parses a date and time string into a Date object, forcing local time.
-       */
+      // *** UPDATED DATE FORMAT DETECTION ***
       function parseDateTime(dateStr, timeStr) {
         if (!dateStr || !timeStr) return null;
 
-        // 1. Clean the date string: replace all common separators with a dash
-        const cleanDate = dateStr.trim().replace(/[\.\/]/g, "-");
+        const cleanDate = dateStr.trim().replace(/[\/]/g, "-").replace(/\./g, "-");
         const cleanTime = timeStr.trim();
 
-        const dateParts = cleanDate.split("-");
+        const parts = cleanDate.split("-");
         const timeParts = cleanTime.split(":").map((p) => parseInt(p.trim()));
 
-        if (dateParts.length < 3 || timeParts.length < 2) return null;
+        if (parts.length !== 3) return null;
 
         let year, month, day;
 
-        // Assume the most common international formats (YYYY-MM-DD or DD-MM-YYYY)
-        if (dateParts[0].length === 4) {
-          // YYYY-MM-DD
-          year = parseInt(dateParts[0]);
-          month = parseInt(dateParts[1]); // Month (1-12)
-          day = parseInt(dateParts[2]);
-        } else if (dateParts[2].length === 4) {
-          // DD-MM-YYYY or MM-DD-YYYY
-          year = parseInt(dateParts[2]);
-          month = parseInt(dateParts[1]); // Month (1-12)
-          day = parseInt(dateParts[0]);
+        if (parts[0].length === 4) {
+          year = parseInt(parts[0]);
+          month = parseInt(parts[1]);
+          day = parseInt(parts[2]);
+        } else if (parts[2].length === 4) {
+          year = parseInt(parts[2]);
+          month = parseInt(parts[1]);
+          day = parseInt(parts[0]);
         } else {
-          return null; // Cannot reliably determine date structure
+          if (parseInt(parts[0]) > 31) {
+            year = 2000 + parseInt(parts[0]);
+            month = parseInt(parts[1]);
+            day = parseInt(parts[2]);
+          } else if (parseInt(parts[2]) > 31) {
+            year = 2000 + parseInt(parts[2]);
+            month = parseInt(parts[1]);
+            day = parseInt(parts[0]);
+          } else {
+            day = parseInt(parts[0]);
+            month = parseInt(parts[1]);
+            year = 2000 + parseInt(parts[2]);
+          }
         }
 
-        // 2. Create Date object using components (Forces Local Time Zone)
-        const dt = new Date(
-          year,
-          month - 1, // Month must be 0-indexed (0=Jan, 11=Dec)
-          day,
-          timeParts[0], // Hour
-          timeParts[1] // Minute
-        );
+        const dt = new Date(year, month - 1, day, timeParts[0], timeParts[1]);
 
-        // Final validation: check if the date is invalid (NaN) or if component values rolled over
-        if (
-          isNaN(dt.getTime()) ||
-          dt.getFullYear() !== year ||
-          dt.getMonth() !== month - 1 ||
-          dt.getDate() !== day
-        ) {
-          return null;
-        }
-
+        if (isNaN(dt.getTime())) return null;
         return dt;
       }
 
-      /**
-       * Calculates the difference in hours (fractional) between two Date objects.
-       * Result is rounded to 2 decimal places.
-       */
       function dateDiff(sla, comp) {
         if (!sla || !comp) return null;
-
-        const diffMs = comp.getTime() - sla.getTime();
-        const diffHours = diffMs / (1000 * 60 * 60);
-
-        return Math.round(diffHours * 100) / 100;
+        return Math.round(((comp.getTime() - sla.getTime()) / (1000 * 60 * 60)) * 100) / 100;
       }
 
-      /**
-       * Picks the best completion time:
-       * 1. Closest to 0, prioritizing negative/zero (on-time/early).
-       * 2. If none, smallest positive (least late).
-       */
       function pickBestCompletion(slaDate, completions) {
-        if (!slaDate || !completions || completions.length === 0)
-          return { date: null, diff: null };
+        if (!slaDate || !completions.length) return { date: null, diff: null };
 
-        let negativeDiffs = [];
-        let positiveDiffs = [];
+        let choices = completions
+          .map((i) => ({ dt: parseDateTime(i.date, i.time) }))
+          .map((i) => ({ ...i, diff: dateDiff(slaDate, i.dt) }))
+          .filter((i) => i.diff !== null);
 
-        completions.forEach((c) => {
-          const dt = parseDateTime(c.date, c.time);
-          const diff = dateDiff(slaDate, dt);
+        let early = choices.filter((d) => d.diff <= 0).sort((a, b) => b.diff - a.diff);
+        let late = choices.filter((d) => d.diff > 0).sort((a, b) => a.diff - b.diff);
 
-          if (diff === null) return;
-
-          const compEntry = { date: dt, diff };
-
-          if (diff <= 0) {
-            negativeDiffs.push(compEntry);
-          } else {
-            positiveDiffs.push(compEntry);
-          }
-        });
-
-        if (negativeDiffs.length > 0) {
-          // Priority 1: Max negative (closest to 0)
-          negativeDiffs.sort((a, b) => b.diff - a.diff);
-          return negativeDiffs[0];
-        }
-
-        if (positiveDiffs.length > 0) {
-          // Priority 2: Min positive (least late)
-          positiveDiffs.sort((a, b) => a.diff - b.diff);
-          return positiveDiffs[0];
-        }
-
-        return { date: null, diff: null };
+        return early.length ? early[0] : late.length ? late[0] : { date: null, diff: null };
       }
-
-      // --- Event Handler ---
 
       document.getElementById("process-btn").addEventListener("click", () => {
-        const slaLines = document
-          .getElementById("sla-input")
-          .value.split(/\r?\n/)
-          .filter((l) => l.trim() !== "");
+        const slaLines = document.getElementById("sla-input").value.split(/\r?\n/).filter((l) => l.trim());
 
-        // Handle completion data that may be across multiple rows (Excel behavior)
-        const completionRawText =
-          document.getElementById("completion-input").value;
-        const completionParts = completionRawText
-          .replace(/\r?\n/g, "\t")
-          .split(/\t/)
-          .filter((p) => p.trim() !== "");
+        const completionInput = document.getElementById("completion-input").value;
+        const completionParts = completionInput.replace(/\r?\n/g, "\t").split(/\t/).filter((p) => p.trim());
 
-        // Map of completions by chain name
         const completionMap = {};
         for (let i = 0; i < completionParts.length; i += 3) {
           const chain = completionParts[i].trim();
           const date = completionParts[i + 1];
           const time = completionParts[i + 2];
           if (!completionMap[chain]) completionMap[chain] = [];
-
-          if (date && time) {
-            completionMap[chain].push({ date, time });
-          }
+          completionMap[chain].push({ date, time });
         }
 
         const tbody = document.querySelector("#output-table tbody");
-        tbody.innerHTML = ""; // Clears previous results
+        tbody.innerHTML = "";
 
         slaLines.forEach((line) => {
-          const parts = line.split("\t").map((p) => p.trim());
-
-          if (parts.length < 3) return;
-
-          const [chain, slaDateStr, slaTimeStr] = parts;
+          const [chain, slaDateStr, slaTimeStr] = line.split("\t").map((p) => p.trim());
           const slaDate = parseDateTime(slaDateStr, slaTimeStr);
-          const completions = completionMap[chain] || [];
 
-          const { date: bestComp, diff } = pickBestCompletion(
-            slaDate,
-            completions
-          );
+          const { diff } = pickBestCompletion(slaDate, completionMap[chain] || []);
 
           const tr = document.createElement("tr");
-
-          // Column 1: Chain Name
-          const chainTd = document.createElement("td");
-          chainTd.textContent = chain || "N/A";
-          tr.appendChild(chainTd);
-
-          // Column 2: Difference (Formatted)
-          const diffTd = document.createElement("td");
-          if (diff === null) {
-            diffTd.textContent = "N/A";
-            diffTd.classList.add("grey");
-          } else {
-            diffTd.textContent = diff;
-            diffTd.classList.add(diff <= 0 ? "green" : "red");
-          }
-          tr.appendChild(diffTd);
-
-          // *** Removed the creation and appending of the bestComp (Best Completion Time) column here ***
-
+          tr.innerHTML = `<td>${chain}</td><td class="${
+            diff === null ? "grey" : diff <= 0 ? "green" : "red"
+          }">${diff ?? "N/A"}</td>`;
           tbody.appendChild(tr);
         });
       });
 
-      // Copy ONLY differences (Column 2)
       document.getElementById("copy-btn").addEventListener("click", () => {
-        // Selects the text content of the 2nd column
-        const diffs = Array.from(
-          document.querySelectorAll("#output-table tbody tr td:nth-child(2)")
-        )
+        const diffs = [...document.querySelectorAll("#output-table tbody tr td:nth-child(2)")]
           .map((td) => td.textContent)
           .join("\n");
-
-        if (navigator.clipboard) {
-          navigator.clipboard
-            .writeText(diffs)
-            .then(() => alert("Differences copied to clipboard!"));
-        } else {
-          alert("Clipboard access denied. Please copy manually.");
-        }
+        navigator.clipboard.writeText(diffs).then(() => alert("Copied!"));
       });
 
-      // Copy Chain Name (Column 1) and Difference (Column 2)
-      document
-        .getElementById("copy-chain-diff-btn")
-        .addEventListener("click", () => {
-          const rows = document.querySelectorAll("#output-table tbody tr");
-          const dataToCopy = Array.from(rows)
-            .map((row) => {
-              // Get data from the 1st column (Chain Name)
-              const chainName =
-                row.querySelector("td:nth-child(1)").textContent;
-              // Get data from the 2nd column (Difference)
-              const diff = row.querySelector("td:nth-child(2)").textContent;
-
-              // Join them with a tab character for pasting into Excel
-              return `${chainName}\t${diff}`;
-            })
-            .join("\n");
-
-          if (navigator.clipboard) {
-            navigator.clipboard
-              .writeText(dataToCopy)
-              .then(() =>
-                alert("Chain Names and Differences copied to clipboard!")
-              );
-          } else {
-            alert("Clipboard access denied. Please copy manually.");
-          }
-        });
+      document.getElementById("copy-chain-diff-btn").addEventListener("click", () => {
+        const output = [...document.querySelectorAll("#output-table tbody tr")]
+          .map((row) => `${row.children[0].textContent}\t${row.children[1].textContent}`)
+          .join("\n");
+        navigator.clipboard.writeText(output).then(() => alert("Copied!"));
+      });
     </script>
   </body>
 </html>
