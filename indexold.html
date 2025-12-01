@@ -1,0 +1,293 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>SLA Completion Calculator</title>
+    <style>
+      body {
+        font-family: Arial, sans-serif;
+        margin: 20px;
+        background-color: #f4f4f9;
+      }
+      h1 {
+        color: #333;
+      }
+      .container {
+        display: flex;
+        gap: 20px;
+        margin-bottom: 20px;
+      }
+      .input-group {
+        flex: 1;
+        padding: 15px;
+        background-color: #fff;
+        border-radius: 8px;
+        box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+      }
+      textarea {
+        width: 100%;
+        height: 150px;
+        padding: 10px;
+        border: 1px solid #ccc;
+        border-radius: 4px;
+        box-sizing: border-box;
+        font-family: monospace;
+        font-size: 14px;
+      }
+      button {
+        padding: 10px 15px;
+        margin-right: 10px;
+        border: none;
+        border-radius: 4px;
+        cursor: pointer;
+        font-weight: bold;
+        transition: background-color 0.3s;
+      }
+      #process-btn {
+        background-color: #007bff;
+        color: white;
+      }
+      #process-btn:hover {
+        background-color: #0056b3;
+      }
+      #copy-btn {
+        background-color: #28a745;
+        color: white;
+      }
+      #copy-btn:hover {
+        background-color: #1e7e34;
+      }
+      #copy-chain-diff-btn {
+        background-color: #ffc107;
+        color: #343a40;
+      }
+      #copy-chain-diff-btn:hover {
+        background-color: #e0a800;
+      }
+
+      #output-table {
+        width: 100%;
+        border-collapse: collapse;
+        margin-top: 20px;
+        background-color: #fff;
+        box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+        border-radius: 8px;
+      }
+      #output-table th,
+      #output-table td {
+        border: 1px solid #ddd;
+        padding: 10px;
+        text-align: left;
+      }
+      #output-table th {
+        background-color: #e9ecef;
+      }
+      .green {
+        background-color: #d4edda;
+        color: #155724;
+        font-weight: bold;
+      }
+      .red {
+        background-color: #f8d7da;
+        color: #721c24;
+        font-weight: bold;
+      }
+      .grey {
+        background-color: #f8f9fa;
+        color: #6c757d;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>SLA Difference Calculator</h1>
+    <p>
+      Inputs must be **tab-separated** ($\backslash$t) data copied from Excel.
+    </p>
+
+    <div class="container">
+      <div class="input-group">
+        <h3>1. SLA Input (Each SLA record on a new line)</h3>
+        <p>Format: <code>ChainName [tab] YYYY-MM-DD [tab] HH:MM</code></p>
+        <textarea
+          id="sla-input"
+          placeholder="Example:&#10;ChainA&#9;2025-11-20&#9;08:00&#10;ChainB&#9;2025-11-19&#9;15:30"
+        ></textarea>
+      </div>
+
+      <div class="input-group">
+        <h3>2. Completion Input (Single or Multiple Rows)</h3>
+        <p>Format: <code>ChainName [tab] YYYY-MM-DD [tab] HH:MM ...</code></p>
+        <textarea
+          id="completion-input"
+          placeholder="Example:&#10;ChainA&#9;2025-11-20&#9;07:50&#9;ChainA&#9;2025-11-20&#9;08:15&#10;ChainB&#9;2025-11-19&#9;15:20"
+        ></textarea>
+      </div>
+    </div>
+
+    <div>
+      <button id="process-btn">Process Data</button>
+      <button id="copy-btn">Copy Differences</button>
+      <button id="copy-chain-diff-btn">Copy Chain & Diff</button>
+    </div>
+
+    <table id="output-table">
+      <thead>
+        <tr>
+          <th>Chain Name</th>
+          <th>Difference (Hours)</th>
+        </tr>
+      </thead>
+      <tbody></tbody>
+    </table>
+
+    <script>
+      // *** UPDATED DATE FORMAT DETECTION ***
+      function parseDateTime(dateStr, timeStr) {
+        if (!dateStr || !timeStr) return null;
+
+        const cleanDate = dateStr
+          .trim()
+          .replace(/[\/]/g, "-")
+          .replace(/\./g, "-");
+        const cleanTime = timeStr.trim();
+
+        const parts = cleanDate.split("-");
+        const timeParts = cleanTime.split(":").map((p) => parseInt(p.trim()));
+
+        if (parts.length !== 3) return null;
+
+        let year, month, day;
+
+        if (parts[0].length === 4) {
+          year = parseInt(parts[0]);
+          month = parseInt(parts[1]);
+          day = parseInt(parts[2]);
+        } else if (parts[2].length === 4) {
+          year = parseInt(parts[2]);
+          month = parseInt(parts[1]);
+          day = parseInt(parts[0]);
+        } else {
+          if (parseInt(parts[0]) > 31) {
+            year = 2000 + parseInt(parts[0]);
+            month = parseInt(parts[1]);
+            day = parseInt(parts[2]);
+          } else if (parseInt(parts[2]) > 31) {
+            year = 2000 + parseInt(parts[2]);
+            month = parseInt(parts[1]);
+            day = parseInt(parts[0]);
+          } else {
+            day = parseInt(parts[0]);
+            month = parseInt(parts[1]);
+            year = 2000 + parseInt(parts[2]);
+          }
+        }
+
+        const dt = new Date(year, month - 1, day, timeParts[0], timeParts[1]);
+
+        if (isNaN(dt.getTime())) return null;
+        return dt;
+      }
+
+      function dateDiff(sla, comp) {
+        if (!sla || !comp) return null;
+        return (
+          Math.round(
+            ((comp.getTime() - sla.getTime()) / (1000 * 60 * 60)) * 100
+          ) / 100
+        );
+      }
+
+      function pickBestCompletion(slaDate, completions) {
+        if (!slaDate || !completions.length) return { date: null, diff: null };
+
+        let choices = completions
+          .map((i) => ({ dt: parseDateTime(i.date, i.time) }))
+          .map((i) => ({ ...i, diff: dateDiff(slaDate, i.dt) }))
+          .filter((i) => i.diff !== null);
+
+        let early = choices
+          .filter((d) => d.diff <= 0)
+          .sort((a, b) => b.diff - a.diff);
+        let late = choices
+          .filter((d) => d.diff > 0)
+          .sort((a, b) => a.diff - b.diff);
+
+        return early.length
+          ? early[0]
+          : late.length
+          ? late[0]
+          : { date: null, diff: null };
+      }
+
+      document.getElementById("process-btn").addEventListener("click", () => {
+        const slaLines = document
+          .getElementById("sla-input")
+          .value.split(/\r?\n/)
+          .filter((l) => l.trim());
+
+        const completionInput =
+          document.getElementById("completion-input").value;
+        const completionParts = completionInput
+          .replace(/\r?\n/g, "\t")
+          .split(/\t/)
+          .filter((p) => p.trim());
+
+        const completionMap = {};
+        for (let i = 0; i < completionParts.length; i += 3) {
+          const chain = completionParts[i].trim();
+          const date = completionParts[i + 1];
+          const time = completionParts[i + 2];
+          if (!completionMap[chain]) completionMap[chain] = [];
+          completionMap[chain].push({ date, time });
+        }
+
+        const tbody = document.querySelector("#output-table tbody");
+        tbody.innerHTML = "";
+
+        slaLines.forEach((line) => {
+          const [chain, slaDateStr, slaTimeStr] = line
+            .split("\t")
+            .map((p) => p.trim());
+          const slaDate = parseDateTime(slaDateStr, slaTimeStr);
+
+          const { diff } = pickBestCompletion(
+            slaDate,
+            completionMap[chain] || []
+          );
+
+          const tr = document.createElement("tr");
+          tr.innerHTML = `<td>${chain}</td><td class="${
+            diff === null ? "grey" : diff <= 0 ? "green" : "red"
+          }">${diff ?? "N/A"}</td>`;
+          tbody.appendChild(tr);
+        });
+      });
+
+      document.getElementById("copy-btn").addEventListener("click", () => {
+        const diffs = [
+          ...document.querySelectorAll(
+            "#output-table tbody tr td:nth-child(2)"
+          ),
+        ]
+          .map((td) => td.textContent)
+          .join("\n");
+        navigator.clipboard.writeText(diffs).then(() => alert("Copied!"));
+      });
+
+      document
+        .getElementById("copy-chain-diff-btn")
+        .addEventListener("click", () => {
+          const output = [
+            ...document.querySelectorAll("#output-table tbody tr"),
+          ]
+            .map(
+              (row) =>
+                `${row.children[0].textContent}\t${row.children[1].textContent}`
+            )
+            .join("\n");
+          navigator.clipboard.writeText(output).then(() => alert("Copied!"));
+        });
+    </script>
+  </body>
+</html>
