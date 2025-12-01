@@ -123,8 +123,8 @@
           <th>Chain Name</th>
           <th>SLA Time</th>
           <th>End Time</th>
-          <th>Difference (Hours)</th>
-          <th>SLA Breached</th>
+          <th>Difference (Hr)</th>
+          <th>Chain Breached</th>
         </tr>
       </thead>
       <tbody></tbody>
@@ -133,27 +133,25 @@
     <script>
       function parseDateTime(dateStr, timeStr) {
         if (!dateStr || !timeStr) return null;
-        const d = dateStr
-          .trim()
-          .replace(/[\/\.]/g, "-")
-          .split("-");
+        const cleanDate = dateStr.trim().replace(/[\/\.]/g, "-");
+        const parts = cleanDate.split("-");
         const t = timeStr.trim().split(":").map(Number);
         let year, month, day;
-        if (d[0].length === 4) {
-          year = +d[0];
-          month = +d[1];
-          day = +d[2];
+        if (parts[0].length === 4) {
+          year = +parts[0];
+          month = +parts[1];
+          day = +parts[2];
         } else {
-          day = +d[0];
-          month = +d[1];
-          year = 2000 + +d[2];
+          day = +parts[0];
+          month = +parts[1];
+          year = 2000 + +parts[2];
         }
         return new Date(year, month - 1, day, t[0] || 0, t[1] || 0, t[2] || 0);
       }
 
       function dateDiff(sla, comp) {
         if (!sla || !comp) return null;
-        return Math.round(((comp - sla) / (1000 * 60 * 60)) * 100) / 100;
+        return Math.round(((comp - sla) / (1000 * 60 * 60)) * 100) / 100; // hours
       }
 
       function pickBestCompletion(sla, completions) {
@@ -173,10 +171,7 @@
 
       function formatTime(dt) {
         if (!dt) return "N/A";
-        const h = String(dt.getHours()).padStart(2, "0");
-        const m = String(dt.getMinutes()).padStart(2, "0");
-        const s = String(dt.getSeconds()).padStart(2, "0");
-        return `${h}:${m}:${s}`;
+        return dt.toTimeString().split(" ")[0]; // HH:MM:SS
       }
 
       document.getElementById("process-btn").onclick = () => {
@@ -189,6 +184,11 @@
           .value.replace(/\n/g, "\t")
           .split("\t")
           .filter((x) => x.trim());
+
+        if (slaLines.length === 0) {
+          alert("No SLA data!");
+          return;
+        }
 
         let compMap = {};
         for (let i = 0; i < compParts.length; i += 3) {
@@ -203,18 +203,14 @@
         const tbody = document.querySelector("#output-table tbody");
         tbody.innerHTML = "";
 
-        if (slaLines.length === 0) {
-          alert("No SLA data found!");
-          return;
-        }
-
         slaLines.forEach((row) => {
           let [chain, sd, st] = row.split("\t").map((x) => x.trim());
           let slaDT = parseDateTime(sd, st);
-          let slaTimeRaw = st;
+          let slaTimeFormatted = formatTime(slaDT);
+
           let best = pickBestCompletion(slaDT, compMap[chain] || []);
           let diff = best.diff;
-          let endTime = formatTime(best.dt);
+          let endTimeFormatted = formatTime(best.dt);
 
           let breached = "NA";
           let breachedClass = "grey";
@@ -225,14 +221,15 @@
 
           tbody.innerHTML += `<tr>
           <td>${chain}</td>
-          <td>${slaTimeRaw}</td>
-          <td>${endTime}</td>
+          <td>${slaTimeFormatted}</td>
+          <td>${endTimeFormatted}</td>
           <td class="${diff === null ? "grey" : diff <= 0 ? "green" : "red"}">${
             diff ?? "N/A"
           }</td>
           <td class="${breachedClass}">${breached}</td>
         </tr>`;
         });
+
         alert("Data processed!");
       };
 
